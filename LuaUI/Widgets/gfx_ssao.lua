@@ -57,8 +57,8 @@ local DEBUG_SSAO = false
 -- File path Constants
 -----------------------------------------------------------------
 
-local shadersDir = "LuaUI/Widgets/shaders/"
-local luaShaderDir = "LuaRules/Gadgets/Include/"
+local shadersDir = "LuaUI/Widgets/Shaders/"
+local luaShaderDir = "LuaUI/Widgets/Include/"
 
 -----------------------------------------------------------------
 -- Global Variables
