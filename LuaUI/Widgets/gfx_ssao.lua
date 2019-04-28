@@ -54,10 +54,17 @@ local DOWNSAMPLE = 2
 local DEBUG_SSAO = false
 
 -----------------------------------------------------------------
+-- File path Constants
+-----------------------------------------------------------------
+
+local shadersDir = "LuaUI/Widgets/shaders/"
+local luaShaderDir = "LuaRules/Gadgets/Include/"
+
+-----------------------------------------------------------------
 -- Global Variables
 -----------------------------------------------------------------
 
-local LuaShader = VFS.Include("LuaRules/Gadgets/Include/LuaShader.lua")
+local LuaShader = VFS.Include(luaShaderDir.."LuaShader.lua")
 
 local vsx, vsy, vpx, vpy
 local firstTime
@@ -187,8 +194,8 @@ function widget:Initialize()
 	end
 
 
-	local gbuffFuseShaderVert = VFS.LoadFile("LuaUI/Widgets_TAP/shaders/gbuffFuse.vert.glsl")
-	local gbuffFuseShaderFrag = VFS.LoadFile("LuaUI/Widgets_TAP/shaders/gbuffFuse.frag.glsl")
+	local gbuffFuseShaderVert = VFS.LoadFile(shadersDir.."gbuffFuse.vert.glsl")
+	local gbuffFuseShaderFrag = VFS.LoadFile(shadersDir.."gbuffFuse.frag.glsl")
 
 	gbuffFuseShaderFrag = gbuffFuseShaderFrag:gsub("###DEPTH_CLIP01###", (Platform.glSupportClipSpaceControl and "1" or "0"))
 
@@ -213,8 +220,8 @@ function widget:Initialize()
 	gbuffFuseShader:Initialize()
 
 
-	local ssaoShaderVert = VFS.LoadFile("LuaUI/Widgets_TAP/shaders/ssao.vert.glsl")
-	local ssaoShaderFrag = VFS.LoadFile("LuaUI/Widgets_TAP/shaders/ssao.frag.glsl")
+	local ssaoShaderVert = VFS.LoadFile(shadersDir.."ssao.vert.glsl")
+	local ssaoShaderFrag = VFS.LoadFile(shadersDir.."ssao.frag.glsl")
 
 	ssaoShaderVert = ssaoShaderVert:gsub("###KERNEL_SIZE###", tostring(SSAO_KERNEL_SIZE))
 	ssaoShaderFrag = ssaoShaderFrag:gsub("###KERNEL_SIZE###", tostring(SSAO_KERNEL_SIZE))
@@ -233,8 +240,8 @@ function widget:Initialize()
 	ssaoShader:Initialize()
 
 
-	local gaussianBlurVert = VFS.LoadFile("LuaUI/Widgets_TAP/shaders/gaussianBlur.vert.glsl")
-	local gaussianBlurFrag = VFS.LoadFile("LuaUI/Widgets_TAP/shaders/gaussianBlur.frag.glsl")
+	local gaussianBlurVert = VFS.LoadFile(shadersDir.."gaussianBlur.vert.glsl")
+	local gaussianBlurFrag = VFS.LoadFile(shadersDir.."gaussianBlur.frag.glsl")
 
 	gaussianBlurFrag = gaussianBlurFrag:gsub("###HALF_KERNEL_SIZE###", tostring(BLUR_HALF_KERNEL_SIZE))
 
