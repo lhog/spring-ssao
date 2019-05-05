@@ -41,17 +41,18 @@ local GL_FUNC_REVERSE_SUBTRACT = 0x800B
 -- Configuration Constants
 -----------------------------------------------------------------
 
-local SSAO_KERNEL_SIZE = 24
+local SSAO_KERNEL_SIZE = 24 -- how many samples are used for SSAO spatial sampling, don't go other 24
+local SSAO_RADIUS = 10 -- world space maximum sampling radius
 
-local BLUR_HALF_KERNEL_SIZE = 5
-local BLUR_PASSES = 3
-local BLUR_SIGMA = 2.0
-local BLUR_SAMPLING_DIST = 1.0
-local BLUR_VALMULT = 1.0
+local BLUR_HALF_KERNEL_SIZE = 5 -- (BLUR_HALF_KERNEL_SIZE + BLUR_HALF_KERNEL_SIZE + 1) samples are used to perform the blur
+local BLUR_PASSES = 3 -- number of blur passes
+local BLUR_SIGMA = 2.0 -- Gaussian sigma
+local BLUR_SAMPLING_DIST = 1.0 -- sampling step in pixels
+local BLUR_VALMULT = 1.0 -- Linear multiplier to the SSAO final strength
 
-local DOWNSAMPLE = 2
+local DOWNSAMPLE = 2 -- increasing downsapling will reduce GPU RAM occupation (a little bit), increase performace (a little bit), introduce shadow blockiness
 
-local DEBUG_SSAO = false
+local DEBUG_SSAO = false -- likely don't work anymore, don't bother
 
 -----------------------------------------------------------------
 -- File path Constants
@@ -223,8 +224,10 @@ function widget:Initialize()
 	local ssaoShaderVert = VFS.LoadFile(shadersDir.."ssao.vert.glsl")
 	local ssaoShaderFrag = VFS.LoadFile(shadersDir.."ssao.frag.glsl")
 
-	ssaoShaderVert = ssaoShaderVert:gsub("###KERNEL_SIZE###", tostring(SSAO_KERNEL_SIZE))
-	ssaoShaderFrag = ssaoShaderFrag:gsub("###KERNEL_SIZE###", tostring(SSAO_KERNEL_SIZE))
+	ssaoShaderVert = ssaoShaderVert:gsub("###SSAO_KERNEL_SIZE###", tostring(SSAO_KERNEL_SIZE))
+	ssaoShaderFrag = ssaoShaderFrag:gsub("###SSAO_KERNEL_SIZE###", tostring(SSAO_KERNEL_SIZE))
+	
+	ssaoShaderFrag = ssaoShaderFrag:gsub("###SSAO_RADIUS###", tostring(SSAO_RADIUS))
 
 	ssaoShader = LuaShader({
 		vertex = ssaoShaderVert,

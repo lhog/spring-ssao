@@ -37,9 +37,9 @@ vec3 hash32(vec2 p) {
 
 //----------------------------------------------------------------------------------------
 
-#define KERNEL_SIZE ###KERNEL_SIZE###
+#define SSAO_KERNEL_SIZE ###SSAO_KERNEL_SIZE###
 
-#define SSAO_RADIUS 10.0
+#define SSAO_RADIUS ###SSAO_RADIUS###
 #define SSAO_MIN 0.1 * SSAO_RADIUS
 #define SSAO_MAX 1.0 * SSAO_RADIUS
 
@@ -50,7 +50,7 @@ vec3 hash32(vec2 p) {
 
 //----------------------------------------------------------------------------------------
 
-flat in vec3 samplingKernel[KERNEL_SIZE];
+flat in vec3 samplingKernel[SSAO_KERNEL_SIZE];
 
 // generally follow https://github.com/McNopper/OpenGL/blob/master/Example28/shader/ssao.frag.glsl
 void main() {
@@ -84,7 +84,7 @@ void main() {
 		float fragDistFactor = 1.0 - smoothstep( SSAO_FADE_DIST, 2.0 * SSAO_FADE_DIST, -viewPosition.z );
 		fragDistFactor = 1.0;
 
-		for (int i = 0; i < KERNEL_SIZE; ++i) {
+		for (int i = 0; i < SSAO_KERNEL_SIZE; ++i) {
 			// Reorient sample vector in view space ...
 			vec3 viewSampleVector = kernelMatrix * samplingKernel[i];
 
@@ -99,26 +99,20 @@ void main() {
 			// [-1;1] to [0;1]
 			vec2 texSampingPoint = SNORM2NORM(ndcTestPosition.xy);
 			
-			//bool farEnough = distance(texSampingPoint * viewPortSize, gl_FragCoord.xy) >= 3.0;
-			//farEnough = true;
 			float sampleProjDistanceFactor = smoothstep(0.0, 3.0, distance(texSampingPoint * viewPortSize, gl_FragCoord.xy));
 			
 			// Get sample viewPos from the viewPosTex texture
 			vec3 viewPositionSampled = texture(viewPosTex, texSampingPoint).xyz;
-			
-			//float rangeCheck = smoothstep(0.0, 1.0, SSAO_RADIUS / abs(viewPosition.z - viewPositionSampled.z));
 
 			float delta = viewPositionSampled.z - viewTestPosition.z;
 
 			float occlusionCondition = float(delta >= SSAO_MIN && delta <= SSAO_MAX);
-			//occlusionCondition = float(viewTestPosition.z < viewPositionSampled.z);
 
-			occlusion += occlusionCondition * fragDistFactor * sampleProjDistanceFactor; //mix(0.0, 1.0, occlusionCondition)
-			//occlusionSamples += float(farEnough);
+			occlusion += occlusionCondition * fragDistFactor * sampleProjDistanceFactor;
 		}
 
 		// No occlusion gets white, full occlusion gets black.
-		occlusion = 1.0 - occlusion / float(KERNEL_SIZE);
+		occlusion = 1.0 - occlusion / float(SSAO_KERNEL_SIZE);
 
 		float occlusionAlpha = occlusion;
 		occlusionAlpha = pow(occlusionAlpha, SSAO_ALPHA_POW);

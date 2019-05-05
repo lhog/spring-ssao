@@ -14,20 +14,20 @@ vec3 hash31(float p) {
 
 //----------------------------------------------------------------------------------------
 
-#define KERNEL_SIZE ###KERNEL_SIZE###
+#define SSAO_KERNEL_SIZE ###SSAO_KERNEL_SIZE###
 
 //----------------------------------------------------------------------------------------
 
-flat out vec3 samplingKernel[KERNEL_SIZE];
+flat out vec3 samplingKernel[SSAO_KERNEL_SIZE];
 
 void main() {
 	gl_Position = gl_Vertex;
 	
-	for (int i = 0; i < KERNEL_SIZE; i++) {
+	for (int i = 0; i < SSAO_KERNEL_SIZE; i++) {
 		vec3 tmp = hash31( float(i) );
 		tmp.xy = NORM2SNORM(tmp.xy);
 		tmp = normalize(tmp);
-		float scale = float(i)/float(KERNEL_SIZE);
+		float scale = float(i)/float(SSAO_KERNEL_SIZE);
 		scale = clamp(scale * scale, 0.1, 1.0);
 		tmp *= scale;
 		samplingKernel[i] = tmp;
