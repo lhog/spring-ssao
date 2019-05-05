@@ -257,7 +257,8 @@ function widget:Initialize()
 	}, "SSAO: Gaussian Blur")
 	gaussianBlurShader:Initialize()
 
-	local gaussWeights, gaussOffsets = GetGaussLinearWeightsOffsets(BLUR_SIGMA, BLUR_HALF_KERNEL_SIZE, BLUR_VALMULT)
+	local realValMult = math.pow(BLUR_VALMULT, 1/(2 * BLUR_PASSES))
+	local gaussWeights, gaussOffsets = GetGaussLinearWeightsOffsets(BLUR_SIGMA, BLUR_HALF_KERNEL_SIZE, realValMult)
 
 	gaussianBlurShader:ActivateWith( function()
 		gaussianBlurShader:SetUniformFloatArrayAlways("weights", gaussWeights)
