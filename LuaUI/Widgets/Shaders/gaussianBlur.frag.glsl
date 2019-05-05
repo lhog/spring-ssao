@@ -20,10 +20,10 @@ void main(void)
 		vec2 uvP = uv + uvOff;
 		vec2 uvN = uv - uvOff;
 
-		okCoords = float( bvec4( greaterThanEqual(uvP, vec2(0.0)), lessThanEqual(uvP, vec2(1.0)) ) );
+		okCoords = float( all(bvec4( greaterThanEqual(uvP, vec2(0.0)), lessThanEqual(uvP, vec2(1.0)) )) );
 		acc += texture( tex, uvP ) * weights[i] * okCoords;
 
-		okCoords = float( bvec4( greaterThanEqual(uvN, vec2(0.0)), lessThanEqual(uvN, vec2(1.0)) ) );
+		okCoords = float( all(bvec4( greaterThanEqual(uvN, vec2(0.0)), lessThanEqual(uvN, vec2(1.0)) )) );
 		acc += texture( tex, uvN ) * weights[i] * okCoords;
 	}
 
