@@ -19,22 +19,13 @@ end
 local GL_COLOR_ATTACHMENT0_EXT = 0x8CE0
 local GL_COLOR_ATTACHMENT1_EXT = 0x8CE1
 
-local GL_R32F = 0x822E
 local GL_RGB16F = 0x881B
-local GL_RGB32F = 0x8815
 
-local GL_R16_SNORM = 0x8F98
-local GL_R8_SNORM = 0x8F94
 local GL_RGB8_SNORM = 0x8F96
 
-local GL_RED = 0x1903
-local GL_R8 = 0x8229
-
 local GL_RGBA8 = 0x8058
-local GL_RGBA16 = 0x805B
 
 local GL_FUNC_ADD = 0x8006
-local GL_FUNC_SUBTRACT = 0x800A
 local GL_FUNC_REVERSE_SUBTRACT = 0x800B
 
 -----------------------------------------------------------------
@@ -52,7 +43,7 @@ local BLUR_VALMULT = 1.0 -- Linear multiplier to the SSAO final strength
 
 local DOWNSAMPLE = 2 -- increasing downsapling will reduce GPU RAM occupation (a little bit), increase performace (a little bit), introduce shadow blockiness
 
-local DEBUG_SSAO = false -- likely don't work anymore, don't bother
+local DEBUG_SSAO = false -- likely doesn't work anymore, don't bother
 
 -----------------------------------------------------------------
 -- File path Constants
@@ -144,7 +135,7 @@ function widget:Initialize()
 	end
 
 	firstTime = true
-    vsx, vsy, vpx, vpy = Spring.GetViewGeometry()
+	vsx, vsy, vpx, vpy = Spring.GetViewGeometry()
 
 	local commonTexOpts = {
 		target = GL_TEXTURE_2D,
