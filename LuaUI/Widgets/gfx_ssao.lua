@@ -1,13 +1,13 @@
-local wiName = "Screen-Space Ambient Occlusion"
+local wiName = "SSAO"
 function widget:GetInfo()
     return {
         name      = wiName,
         version	  = 2.0,
-        desc      = "Generate ambient occlusion in screen space",
+        desc      = "Screen-Space Ambient Occlusion",
         author    = "ivand",
         date      = "2019",
         license   = "GPL",
-        layer     = -1,
+        layer     = math.huge,
         enabled   = false, --true
     }
 end
@@ -18,6 +18,7 @@ end
 
 local GL_COLOR_ATTACHMENT0_EXT = 0x8CE0
 local GL_COLOR_ATTACHMENT1_EXT = 0x8CE1
+local GL_COLOR_ATTACHMENT2_EXT = 0x8CE2
 
 local GL_RGB16F = 0x881B
 
@@ -32,18 +33,25 @@ local GL_FUNC_REVERSE_SUBTRACT = 0x800B
 -- Configuration Constants
 -----------------------------------------------------------------
 
-local SSAO_KERNEL_SIZE = 24 -- how many samples are used for SSAO spatial sampling, don't go over 24
-local SSAO_RADIUS = 10 -- world space maximum sampling radius
+local SSAO_KERNEL_SIZE = 24 -- how many samples are used for SSAO spatial sampling
+local SSAO_RADIUS = 4 -- world space maximum sampling radius
+local SSAO_MIN = 1.0 -- minimum depth difference between fragment and sample depths to trigger SSAO sample occlusion. Absolute value in world space coords.
+local SSAO_MAX = 1.0 -- maximum depth difference between fragment and sample depths to trigger SSAO sample occlusion. Percentage of SSAO_RADIUS.
+local SSAO_ALPHA_POW = 2.0 -- consider this as SSAO effect strength
 
-local BLUR_HALF_KERNEL_SIZE = 5 -- (BLUR_HALF_KERNEL_SIZE + BLUR_HALF_KERNEL_SIZE + 1) samples are used to perform the blur
-local BLUR_PASSES = 3 -- number of blur passes
-local BLUR_SIGMA = 2.0 -- Gaussian sigma
-local BLUR_SAMPLING_DIST = 1.0 -- sampling step in pixels
-local BLUR_VALMULT = 1.0 -- Linear multiplier to the SSAO final strength
+local BLUR_HALF_KERNEL_SIZE = 4 -- (BLUR_HALF_KERNEL_SIZE + BLUR_HALF_KERNEL_SIZE + 1) samples are used to perform the blur
+local BLUR_PASSES = 2 -- number of blur passes
+local BLUR_SIGMA = 1.5 -- Gaussian sigma of a single blur pass, other factors like BLUR_HALF_KERNEL_SIZE, BLUR_PASSES and DOWNSAMPLE affect the end result gaussian shape too
 
-local DOWNSAMPLE = 2 -- increasing downsapling will reduce GPU RAM occupation (a little bit), increase performace (a little bit), introduce shadow blockiness
+local DOWNSAMPLE = 2 -- increasing downsapling will reduce GPU RAM occupation (a little bit), increase performace (a little bit), introduce occlusion blockiness
 
-local DEBUG_SSAO = false -- likely doesn't work anymore, don't bother
+-- experimantal options
+local BLUR_BILATERAL = false -- enable depth-aware blur. I observe no difference between bilateral and regular gaussian blur
+local BLUR_BILATERAL_DEPTH_CUTOFF = 1.0 -- depth-aware blur cutoff
+
+local MERGE_MISC = false -- for future material indices based SSAO evaluation
+local DEBUG_SSAO = false -- use for debug
+
 
 -----------------------------------------------------------------
 -- File path Constants
@@ -70,6 +78,7 @@ local ssaoBlurFBOs = {}
 
 local gbuffFuseViewPosTex
 local gbuffFuseViewNormalTex
+local gbuffFuseMiscTex
 local ssaoTex
 local ssaoBlurTexes = {}
 
@@ -119,6 +128,42 @@ local function GetGaussLinearWeightsOffsets(sigma, kernelHalfSize, valMult)
 	return weights, offsets
 end
 
+
+-- quick port of GLSL.
+--[[
+	for (int i = 0; i < SSAO_KERNEL_SIZE; i++) {
+		vec3 tmp = hash31( float(i) );
+		tmp.xy = NORM2SNORM(tmp.xy);
+		tmp = normalize(tmp);
+		float scale = float(i)/float(SSAO_KERNEL_SIZE);
+		scale = clamp(scale * scale, 0.1, 1.0);
+		tmp *= scale;
+		samplingKernel[i] = tmp;
+	}
+]]--
+-- I do so because of according GLSL spec gl_MaxVertexOutputComponents = 64; and gl_MaxFragmentUniformComponents = 1024;
+-- so bigger SSAO kernel size can be supported if they are conveyed via uniforms vs varyings
+local function GetSamplingVectorArray(kernelSize)
+	local result = {}
+	math.randomseed(kernelSize) -- for repeatability
+	for i = 0, kernelSize - 1 do
+		local x, y, z = math.random(), math.random(), math.random() -- [0, 1]^3
+
+		x, y = 2.0 * x - 1.0, 2.0 * y - 1.0 -- xy:[-1, 1]^2, z:[0, 1]
+
+		local l = math.sqrt(x * x + y * y + z * z) --norm
+		x, y, z = x / l, y / l, z / l --normalize
+
+		local scale = i / (kernelSize - 1)
+		scale = scale * scale -- shift most samples closer to the origin
+		scale = math.min(math.max(scale, 0.1), 1.0) --clamp
+
+		x, y, z = x * scale, y * scale, z * scale -- scale
+		result[i] = {x = x, y = y, z = z}
+	end
+	return result
+end
+
 -----------------------------------------------------------------
 -- Widget Functions
 -----------------------------------------------------------------
@@ -147,25 +192,42 @@ function widget:Initialize()
 		wrap_t = GL.CLAMP_TO_EDGE,
 	}
 
-	commonTexOpts.format = GL_RGBA8
-	ssaoTex = gl.CreateTexture(vsx / DOWNSAMPLE, vsy / DOWNSAMPLE, commonTexOpts)
-
 	commonTexOpts.format = GL_RGB16F
 	gbuffFuseViewPosTex = gl.CreateTexture(vsx, vsy, commonTexOpts)
 
 	commonTexOpts.format = GL_RGB8_SNORM
 	gbuffFuseViewNormalTex = gl.CreateTexture(vsx, vsy, commonTexOpts)
 
+	if MERGE_MISC then
+		commonTexOpts.format = GL_RGBA8
+		gbuffFuseMiscTex = gl.CreateTexture(vsx, vsy, commonTexOpts)
+	end
+
+	commonTexOpts.mag_filter = GL.LINEAR
+
+	commonTexOpts.format = GL_RGBA8
+	ssaoTex = gl.CreateTexture(vsx / DOWNSAMPLE, vsy / DOWNSAMPLE, commonTexOpts)
+
 	commonTexOpts.format = GL_RGBA8
 	for i = 1, 2 do
 		ssaoBlurTexes[i] = gl.CreateTexture(vsx / DOWNSAMPLE, vsy / DOWNSAMPLE, commonTexOpts)
 	end
 
-	gbuffFuseFBO = gl.CreateFBO({
-		color0 = gbuffFuseViewPosTex,
-		color1 = gbuffFuseViewNormalTex,
-		drawbuffers = {GL_COLOR_ATTACHMENT0_EXT, GL_COLOR_ATTACHMENT1_EXT},
-	})
+	if MERGE_MISC then
+		gbuffFuseFBO = gl.CreateFBO({
+			color0 = gbuffFuseViewPosTex,
+			color1 = gbuffFuseViewNormalTex,
+			color2 = gbuffFuseMiscTex,
+			drawbuffers = {GL_COLOR_ATTACHMENT0_EXT, GL_COLOR_ATTACHMENT1_EXT, GL_COLOR_ATTACHMENT2_EXT},
+		})
+	else
+		gbuffFuseFBO = gl.CreateFBO({
+			color0 = gbuffFuseViewPosTex,
+			color1 = gbuffFuseViewNormalTex,
+			drawbuffers = {GL_COLOR_ATTACHMENT0_EXT, GL_COLOR_ATTACHMENT1_EXT},
+		})
+	end
+
 	if not gl.IsValidFBO(gbuffFuseFBO) then
 		Spring.Echo(string.format("Error in [%s] widget: %s", wiName, "Invalid gbuffFuseFBO"))
 	end
@@ -189,7 +251,8 @@ function widget:Initialize()
 	local gbuffFuseShaderVert = VFS.LoadFile(shadersDir.."gbuffFuse.vert.glsl")
 	local gbuffFuseShaderFrag = VFS.LoadFile(shadersDir.."gbuffFuse.frag.glsl")
 
-	gbuffFuseShaderFrag = gbuffFuseShaderFrag:gsub("###DEPTH_CLIP01###", (Platform.glSupportClipSpaceControl and "1" or "0"))
+	gbuffFuseShaderFrag = gbuffFuseShaderFrag:gsub("###DEPTH_CLIP01###", tostring((Platform.glSupportClipSpaceControl and 1) or 0))
+	gbuffFuseShaderFrag = gbuffFuseShaderFrag:gsub("###MERGE_MISC###", tostring((MERGE_MISC and 1) or 0))
 
 	gbuffFuseShader = LuaShader({
 		vertex = gbuffFuseShaderVert,
@@ -204,6 +267,9 @@ function widget:Initialize()
 			modelDepthTex = 1,
 			mapNormalTex = 2,
 			mapDepthTex = 3,
+
+			modelMiscTex = 4,
+			mapMiscTex = 5,
 		},
 		uniformFloat = {
 			viewPortSize = {vsx, vsy},
@@ -215,10 +281,13 @@ function widget:Initialize()
 	local ssaoShaderVert = VFS.LoadFile(shadersDir.."ssao.vert.glsl")
 	local ssaoShaderFrag = VFS.LoadFile(shadersDir.."ssao.frag.glsl")
 
-	ssaoShaderVert = ssaoShaderVert:gsub("###SSAO_KERNEL_SIZE###", tostring(SSAO_KERNEL_SIZE))
 	ssaoShaderFrag = ssaoShaderFrag:gsub("###SSAO_KERNEL_SIZE###", tostring(SSAO_KERNEL_SIZE))
-	
+
 	ssaoShaderFrag = ssaoShaderFrag:gsub("###SSAO_RADIUS###", tostring(SSAO_RADIUS))
+	ssaoShaderFrag = ssaoShaderFrag:gsub("###SSAO_MIN###", tostring(SSAO_MIN))
+	ssaoShaderFrag = ssaoShaderFrag:gsub("###SSAO_MAX###", tostring(SSAO_MAX))
+
+	ssaoShaderFrag = ssaoShaderFrag:gsub("###SSAO_ALPHA_POW###", tostring(SSAO_ALPHA_POW))
 
 	ssaoShader = LuaShader({
 		vertex = ssaoShaderVert,
@@ -233,17 +302,29 @@ function widget:Initialize()
 	}, "SSAO: Processing")
 	ssaoShader:Initialize()
 
+	ssaoShader:ActivateWith( function()
+		local samplingKernel = GetSamplingVectorArray(SSAO_KERNEL_SIZE)
+		for i = 0, SSAO_KERNEL_SIZE - 1 do
+			local sv = samplingKernel[i]
+			ssaoShader:SetUniformFloatAlways(string.format("samplingKernel[%d]", i), sv.x, sv.y, sv.z)
+		end
+	end)
+
 
 	local gaussianBlurVert = VFS.LoadFile(shadersDir.."gaussianBlur.vert.glsl")
 	local gaussianBlurFrag = VFS.LoadFile(shadersDir.."gaussianBlur.frag.glsl")
 
-	gaussianBlurFrag = gaussianBlurFrag:gsub("###HALF_KERNEL_SIZE###", tostring(BLUR_HALF_KERNEL_SIZE))
+	gaussianBlurFrag = gaussianBlurFrag:gsub("###BLUR_HALF_KERNEL_SIZE###", tostring(BLUR_HALF_KERNEL_SIZE))
+	gaussianBlurFrag = gaussianBlurFrag:gsub("###BLUR_BILATERAL###", tostring((BLUR_BILATERAL and 1) or 0))
+	gaussianBlurFrag = gaussianBlurFrag:gsub("###SSAO_RADIUS###", tostring(SSAO_RADIUS))
+	gaussianBlurFrag = gaussianBlurFrag:gsub("###BLUR_BILATERAL_DEPTH_CUTOFF###", tostring(BLUR_BILATERAL_DEPTH_CUTOFF))
 
 	gaussianBlurShader = LuaShader({
 		vertex = gaussianBlurVert,
 		fragment = gaussianBlurFrag,
 		uniformInt = {
 			tex = 0,
+			viewPosTex = 1,
 		},
 		uniformFloat = {
 			viewPortSize = {vsx / DOWNSAMPLE, vsy / DOWNSAMPLE},
@@ -251,12 +332,20 @@ function widget:Initialize()
 	}, "SSAO: Gaussian Blur")
 	gaussianBlurShader:Initialize()
 
-	local realValMult = math.pow(BLUR_VALMULT, 1/(2 * BLUR_PASSES))
-	local gaussWeights, gaussOffsets = GetGaussLinearWeightsOffsets(BLUR_SIGMA, BLUR_HALF_KERNEL_SIZE, realValMult)
+	local gaussWeights, gaussOffsets = GetGaussLinearWeightsOffsets(BLUR_SIGMA, BLUR_HALF_KERNEL_SIZE, 1.0)
 
 	gaussianBlurShader:ActivateWith( function()
 		gaussianBlurShader:SetUniformFloatArrayAlways("weights", gaussWeights)
 		gaussianBlurShader:SetUniformFloatArrayAlways("offsets", gaussOffsets)
+	end)
+
+	widget:SunChanged()
+end
+
+function widget:SunChanged()
+	ssaoShader:ActivateWith( function()
+		local shadowDensity = gl.GetSun("shadowDensity", "unit")
+		ssaoShader:SetUniformFloatAlways("shadowDensity", shadowDensity)
 	end)
 end
 
@@ -275,6 +364,10 @@ function widget:Shutdown()
 	gl.DeleteTexture(ssaoTex)
 	gl.DeleteTexture(gbuffFuseViewPosTex)
 	gl.DeleteTexture(gbuffFuseViewNormalTex)
+	if MERGE_MISC then
+		gl.DeleteTexture(gbuffFuseMiscTex)
+	end
+
 	for i = 1, 2 do
 		gl.DeleteTexture(ssaoBlurTexes[i])
 	end
@@ -290,13 +383,19 @@ function widget:Shutdown()
 	gaussianBlurShader:Finalize()
 end
 
-function widget:DrawScreenEffects()
+local function DoEverything(isScreenSpace)
 	gl.DepthTest(false)
+	gl.DepthMask(false)
 	gl.Blending(false)
 
+
 	if firstTime then
-		screenQuadList = gl.CreateList(gl.TexRect, -1, -1, 1, 1)
-		screenWideList = gl.CreateList(gl.TexRect, 0, vsy, vsx, 0)
+		screenQuadList = gl.CreateList(gl.TexRect, -1, -1, 1, 0)
+		if isScreenSpace then
+			screenWideList = gl.CreateList(gl.TexRect, 0, vsy, vsx, 0)
+		else
+			screenWideList = gl.CreateList(gl.TexRect, -1, -1, 1, 1, false, true)
+		end
 		firstTime = false
 	end
 
@@ -311,6 +410,12 @@ function widget:DrawScreenEffects()
 			gl.Texture(2, "$map_gbuffer_normtex")
 			gl.Texture(3, "$map_gbuffer_zvaltex")
 
+			if MERGE_MISC then
+				gl.Texture(4, "$model_gbuffer_misctex")
+				gl.Texture(5, "$map_gbuffer_misctex")
+			end
+
+
 			gl.CallList(screenQuadList) -- gl.TexRect(-1, -1, 1, 1)
 			--gl.TexRect(-1, -1, 1, 1)
 
@@ -318,6 +423,10 @@ function widget:DrawScreenEffects()
 			gl.Texture(1, false)
 			gl.Texture(2, false)
 			gl.Texture(3, false)
+			if MERGE_MISC then
+				gl.Texture(4, false)
+				gl.Texture(5, false)
+			end
 		end)
 	end)
 
@@ -336,17 +445,20 @@ function widget:DrawScreenEffects()
 	end)
 
 	gl.Texture(0, ssaoTex)
+	if BLUR_BILATERRAL then
+		gl.Texture(1, gbuffFuseViewPosTex)
+	end
 
 	for i = 1, BLUR_PASSES do
 		gaussianBlurShader:ActivateWith( function ()
 
-			gaussianBlurShader:SetUniform("dir", BLUR_SAMPLING_DIST, 0.0) --horizontal blur
+			gaussianBlurShader:SetUniform("dir", 1.0, 0.0) --horizontal blur
 			gl.ActiveFBO(ssaoBlurFBOs[1], function()
 				gl.CallList(screenQuadList) -- gl.TexRect(-1, -1, 1, 1)
 			end)
 			gl.Texture(0, ssaoBlurTexes[1])
 
-			gaussianBlurShader:SetUniform("dir", 0.0, BLUR_SAMPLING_DIST) --vertical blur
+			gaussianBlurShader:SetUniform("dir", 0.0, 1.0) --vertical blur
 			gl.ActiveFBO(ssaoBlurFBOs[2], function()
 				gl.CallList(screenQuadList) -- gl.TexRect(-1, -1, 1, 1)
 			end)
@@ -355,31 +467,59 @@ function widget:DrawScreenEffects()
 		end)
 	end
 
+
 	if DEBUG_SSAO then
 		gl.Blending(false)
 	else
 		gl.BlendEquation(GL_FUNC_REVERSE_SUBTRACT)
 		--gl.Blending("alpha")
 		gl.Blending(true)
-		gl.BlendFunc(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA) --alpha NO pre-multiply
+		gl.BlendFuncSeparate(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA, GL.ZERO, GL.ONE)
+		--gl.BlendFunc(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA) --alpha NO pre-multiply
 		--gl.BlendFunc(GL.ONE, GL.ONE_MINUS_SRC_ALPHA) --alpha pre-multiply
 		--gl.BlendFunc(GL.ZERO, GL.ONE)
 	end
 
 	-- Already bound
 	--gl.Texture(0, ssaoBlurTexes[1])
+	if BLUR_BILATERRAL then
+		gl.Texture(1, false)
+	end
 
-	gl.CallList(screenWideList) --gl.TexRect(0, vsy, vsx, 0)
+	gl.CallList(screenWideList)
 
 	if not DEBUG_SSAO then
 		gl.BlendEquation(GL_FUNC_ADD)
 	end
+
+
+
 
 	gl.Texture(0, false)
 	gl.Texture(1, false)
 	gl.Texture(2, false)
 	gl.Texture(3, false)
 
-	gl.Blending(true)
-	gl.DepthTest(true)
+
+	gl.Blending("alpha")
+	--gl.DepthMask(true)
+	--gl.DepthTest(true)
+end
+
+function widget:DrawWorld()
+	gl.MatrixMode(GL.MODELVIEW)
+	gl.PushMatrix()
+	gl.LoadIdentity()
+
+		gl.MatrixMode(GL.PROJECTION)
+		gl.PushMatrix()
+		gl.LoadIdentity();
+
+			DoEverything(false)
+
+		gl.MatrixMode(GL.PROJECTION)
+		gl.PopMatrix()
+
+	gl.MatrixMode(GL.MODELVIEW)
+	gl.PopMatrix()
 end
