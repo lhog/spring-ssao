@@ -390,7 +390,7 @@ local function DoEverything(isScreenSpace)
 
 
 	if firstTime then
-		screenQuadList = gl.CreateList(gl.TexRect, -1, -1, 1, 0)
+		screenQuadList = gl.CreateList(gl.TexRect, -1, -1, 1, 1)
 		if isScreenSpace then
 			screenWideList = gl.CreateList(gl.TexRect, 0, vsy, vsx, 0)
 		else
